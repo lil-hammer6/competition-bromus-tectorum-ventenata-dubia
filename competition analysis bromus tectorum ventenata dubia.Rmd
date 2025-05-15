@@ -1,0 +1,1082 @@
+---
+title: "competition analysis"
+author: ""
+date: "2024-03-19"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(ggtext)
+library(minpack.lm)
+
+
+
+comp_data <- read_csv("compdata24.csv")
+comp_data <- as.data.frame(comp_data)
+```
+
+
+
+
+$$ w_V = w_{mV} ( 1 + \beta_{V}(N_{V}+ \alpha_{BV}N_B))^{-b_{V}} $$
+
+$$ w_B = w_{mB} ( 1 + \beta_{B}(N_{B}+ \alpha_{VB}N_V))^{-b_{B}} $$
+
+## equations
+
+```{r}
+# ventenata
+equ1 <- function (wm, alpha, N, b) {
+  return((wm * (1 + alpha * N))^-(b))
+}
+equ1_log <- function(wm, alpha, N, b) {
+  return(-b * (log(wm) + log(1 + alpha * N)))
+}
+equ3 <- function (wmv, betav, nv, alphabv, nb, b) {
+  return(( wmv * (1 + betav * (nv + alphabv * nb))^(-b)))
+}
+equ3_log <- function(wmv, betav, nv, alphabv, nb, b) {
+  return(log(wmv) - b * log(1 + betav * (nv + alphabv * nb)))
+}
+
+# cheatgrass
+equ2 <- function (wm, alpha, N, b) {
+  return((wm * (1 + alpha * N))^-(b))
+}
+equ2_log <- function(wm, alpha, N, b) {
+  return(-b * (log(wm) + log(1 + alpha * N)))
+}
+equ4 <- function (wmb, betab, nb, alphavb, nv, b) {
+  return(( wmb * (1 + betab * (nb + alphavb * nv))^(-b)))
+}
+equ4_log <- function(wmb, betab, nv, alphavb, nb, b) {
+  return(log(wmb) - b * log(1 + betab * (nb + alphavb * nv)))
+}
+
+```
+
+
+
+## ventenata dubia
+
+### monoculture increasing density
+
+analysis
+```{r}
+vedu <- subset(comp_data, Species=='VEDU')
+vedu <- subset(vedu, Phase == '1')
+vedu <- subset(vedu, Soil == 'Native')
+
+vedualone <- subset(vedu, Vent_pct == '100')
+
+
+wm <- subset(vedualone, Total_plants == '1')
+wm <- mean(wm$Biomass)
+N <- vedualone$v_count
+b <- 1
+rm(alpha)
+
+fit <- nls(Biomass ~ equ1(wm, alpha, v_count, b), data = vedualone, 
+                   start = list(alpha = 0.1)) 
+
+```
+
+check residuals
+```{r}
+# Get the residuals
+residuals <- resid(fit)
+qqnorm(residuals)
+qqline(residuals, col="red")
+hist(residuals, breaks = 20, main = "Histogram of Residuals")
+```
+
+remove outliers
+```{r}
+# Identify outliers using the IQR method
+Q1 <- quantile(residuals, 0.25)
+Q3 <- quantile(residuals, 0.75)
+IQR <- Q3 - Q1
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+outliers <- which(residuals < lower_bound | residuals > upper_bound)
+
+# Remove outliers from the dataset
+vedualone <- vedualone[-outliers, ]
+
+max(vedualone$Biomass)
+mean(vedualone$Biomass)
+```
+
+
+log transform
+
+```{r}
+# Check for Biomass values that are non-positive (since log(Biomass) requires positive values)
+summary(vedualone$Biomass)  # Ensure all values are > 0
+
+# Check for invalid values inside the log term: 1 + alpha * N must be positive
+summary(1 + 0.1 * vedualone$v_count)  # Check for possible issues here
+
+
+filtered_data <- vedualone %>%
+  filter(Biomass > 0, (1 + 0.1 * vedualone$v_count) > 0)  # Using alpha = 0.1 as an example
+
+# Now perform the log transformation
+filtered_data$log_Biomass <- log(filtered_data$Biomass)
+
+b <- 1
+equ1_log <- function(wm, alpha, N, b) {
+  return(-b * (log(wm) + log(1 + alpha * N)))
+}
+# Re-fit the log-transformed model
+fit_log <- nls(log_Biomass ~ equ1_log(wm, alpha, v_count, b), 
+               data = filtered_data, 
+               start = list(alpha = 0.1))
+
+# Check the fit
+summary(fit_log)
+
+sum <- summary(fit_log)
+
+
+```
+
+```{r}
+residuals <- resid(fit_log)
+qqnorm(residuals)
+qqline(residuals, col="red")
+hist(residuals, breaks = 20, main = "Histogram of Residuals")
+```
+
+```{r}
+rm(b)
+alpha <- 222.14
+
+
+# Re-fit the log-transformed model
+fit_log <- nls(log_Biomass ~ equ1_log(wm, alpha, v_count, b), 
+               data = filtered_data, 
+               start = list(b = -1))
+
+# Check the fit
+summary(fit_log)
+
+confint(fit_log)
+```
+
+
+```{r}
+# Calculate residual sum of squares (RSS)
+RSS_logv <- sum(resid(fit_log)^2)
+
+
+# Calculate total sum of squares (TSS)
+TSS_logv <- sum((filtered_data$log_Biomass - mean(filtered_data$log_Biomass))^2)
+
+# Compute R-squared for each model
+R2_logv <- 1 - (RSS_logv / TSS_logv)
+
+
+
+# Calculate residual sum of squares (RSS)
+RSS_logv <- sum(resid(fit_log)^2)
+
+
+# Calculate total sum of squares (TSS)
+TSS_logv <- sum((filtered_data$log_Biomass - mean(filtered_data$log_Biomass))^2)
+
+# Compute R-squared for each model
+R2_logv <- 1 - (RSS_logv / TSS_logv)
+
+
+# Print the results
+cat("R-squared for fit_logv: ", R2_logv, "\n")
+
+```
+
+
+
+### Figure ventenata native soil alone
+```{r}
+
+filtered_data$fitted_log_Biomass <- predict(fit_log)
+
+  ggplot(filtered_data, aes(x = (v_count), y = log_Biomass))+
+  geom_point(alpha=0.25, 
+             size = 3,
+             pch = 17)+
+  geom_smooth(aes(y = fitted_log_Biomass), color = "goldenrod", linewidth = 1.2) + 
+#  coord_cartesian(ylim = c(0.0,0.055), xlim = c(1,11))+
+  theme_light() +
+ # scale_x_continuous(breaks = c(1:11))+
+  #scale_y_continuous(scale_y_continuous(labels = scales::number_format(accuracy = 0.01),breaks = c(0:9)))+
+  labs(x = "Density of *V. dubia*", y = "Individual plant biomass (g)")+
+  theme(legend.position="none",axis.title.x =  ggtext::element_markdown(size = 12), axis.text.x = element_text(size= 12), axis.title.y = element_text(size = 12), axis.text.y = element_text( size = 12))
+
+
+```
+
+
+
+## competition 
+
+
+```{r}
+vedu <- subset(comp_data, Species=='VEDU')
+vedu <- subset(vedu, Phase == '1')
+vedu <- subset(vedu, Soil == 'Native')
+wmv <- max(vedu$Biomass)
+b <- 0.9673
+
+
+fit_old <- nls(Biomass ~ equ3(wmv, betav, v_count, alphabv, b_count, b), data = vedu, 
+                start = list(betav = 0.1, alphabv = 0.1))
+
+
+summary(fit_old)
+```
+
+check residuals
+```{r}
+residuals <- residuals(fit_old)
+qq <- qqnorm(residuals)
+qqline(residuals)
+
+# Get the residuals
+residuals <- resid(fit_old)
+qqnorm(residuals)
+qqline(residuals, col="red")
+hist(residuals, breaks = 20, main = "Histogram of Residuals")
+```
+
+remove outliers
+```{r}
+# Identify outliers using the IQR method
+Q1 <- quantile(residuals, 0.25)
+Q3 <- quantile(residuals, 0.75)
+IQR <- Q3 - Q1
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+outliers <- which(residuals < lower_bound | residuals > upper_bound)
+
+# Remove outliers from the dataset
+vedu <- vedu[-outliers, ]
+mean(vedu$Biomass)
+wmv <- max(vedu$Biomass)
+```
+
+
+log transform
+
+```{r}
+# Check for Biomass values that are non-positive (since log(Biomass) requires positive values)
+summary(vedu$Biomass)  # Ensure all values are > 0
+
+# Check for invalid values inside the log term: 1 + alpha * N must be positive
+summary(1 + 0.1 * vedu$v_count)  # Check for possible issues here
+
+
+
+b <- 0.9673
+# Ensure Biomass and log terms are positive
+filtered_datav <- vedu %>%
+  filter(Biomass > 0) %>%
+  filter(1 + 0.1 * (v_count + 0.1 * b_count) > 0)  # Adjust the initial values of betav and alphabv accordingly
+filtered_datav$b_count <- as.numeric(filtered_datav$b_count)
+# Log-transform the dependent variable (Biomass)
+filtered_datav$log_Biomass <- log(filtered_datav$Biomass)
+mean(filtered_datav$Biomass)
+# Define the log-transformed model function
+
+b <- 0.9673
+
+equ3_log <- function(wmv, betav, nv, alphabv, nb, b) {
+  return(log(wmv) - b * log(1 + betav * (nv + alphabv * nb)))
+}
+
+
+# Fit the log-transformed model
+fit_logv <- nls(log_Biomass ~ equ3_log(wmv, betav, v_count, alphabv, b_count, b), 
+               data = filtered_datav, 
+               start = list(betav = 0.1, alphabv = 0.1))
+
+# Check the fit
+summary(fit_logv)
+```
+
+
+
+```{r}
+# Calculate residual sum of squares (RSS)
+RSS_logvv <- sum(resid(fit_logv)^2)
+
+
+# Calculate total sum of squares (TSS)
+TSS_logvv <- sum((filtered_datav$log_Biomass - mean(filtered_datav$log_Biomass))^2)
+
+# Compute R-squared for each model
+R2_logvv <- 1 - (RSS_logvv / TSS_logvv)
+
+
+# Make predictions on the log scale
+log_predictions <- predict(fit_logv, newdata = filtered_datav)
+
+# Back-transform the predictions to the original scale
+predictions <- exp(log_predictions)
+
+# Calculate the residuals on the original scale
+residuals <- filtered_datav$Biomass - predictions
+
+# Residual sum of squares (RSS) on original scale
+rss <- sum(residuals^2)
+
+# Total sum of squares (TSS) on original scale
+tss <- sum((filtered_datav$Biomass - mean(filtered_datav$Biomass))^2)
+
+# Pseudo R^2 on the original scale
+pseudo_r2 <- 1 - (rss / tss)
+
+# Print pseudo R^2
+print(pseudo_r2)
+```
+
+```{r}
+residuals <- resid(fit_logv)
+qqnorm(residuals)
+qqline(residuals, col="red")
+hist(residuals, breaks = 20, main = "Histogram of Residuals")
+```
+
+
+## identify thresholds
+
+```{r}
+fit_logv <- nlsLM(log_Biomass ~ equ3_log(wmv, betav, v_count, alphabv, b_count, b), 
+               data = filtered_datav, 
+               start = list(betav = 0.1, alphabv = 0.1),
+               control = nls.lm.control(maxiter = 500))
+
+# Profile the likelihood
+prof1 <- profile(fit_logv)
+
+# Get confidence intervals
+confint(prof1)
+
+
+
+
+# Extract coefficients from the model
+betav_hat <- coef(fit_logv)["betav"]
+alphabv_hat <- coef(fit_logv)["alphabv"]
+
+# Calculate thresholds
+Dv_50 <- 1 / betav_hat
+Dv_75 <- 3 / betav_hat
+
+Db_50 <- 1 / (alphabv_hat * betav_hat)
+Db_75 <- 3 / (alphabv_hat * betav_hat)
+
+# Print results
+cat("Species v thresholds:\n")
+cat("50% decline:", Dv_50, "\n")
+cat("75% decline:", Dv_75, "\n")
+
+cat("\nSpecies b thresholds:\n")
+cat("50% decline:", Db_50, "\n")
+cat("75% decline:", Db_75, "\n")
+
+# Confidence intervals for betab and alphavb from profile likelihood
+conf_betav <- confint(prof1)["betav", ]
+conf_alphabv <- confint(prof1)["alphabv", ]
+
+# Confidence intervals for thresholds using upper and lower bounds
+Dv_50_ci <- c(1 / conf_betav[2], 1 / conf_betav[1])  # Reverse for proper bounds
+Dv_75_ci <- c(3 / conf_betav[2], 3 / conf_betav[1])
+
+Db_50_ci <- c(1 / (conf_alphabv[2] * conf_betav[2]), 
+              1 / (conf_alphabv[1] * conf_betav[1]))
+Db_75_ci <- c(3 / (conf_alphabv[2] * conf_betav[2]), 
+              3 / (conf_alphabv[1] * conf_betav[1]))
+
+# Print confidence intervals
+cat("\nSpecies v thresholds CI:\n")
+cat("50% decline CI:", Dv_50_ci, "\n")
+cat("75% decline CI:", Dv_75_ci, "\n")
+
+cat("\nSpecies b thresholds CI:\n")
+cat("50% decline CI:", Db_50_ci, "\n")
+cat("75% decline CI:", Db_75_ci, "\n")
+
+```
+
+
+
+### Figure ventenata native soil alone
+```{r}
+
+filtered_datav$fitted_log_Biomass <- predict(fit_logv)
+
+
+ggplot(filtered_datav, aes(x = (v_count), y = log_Biomass))+
+  geom_point(alpha=0.25, 
+             size = 3,
+             pch = 17)+
+  geom_smooth(aes(y = fitted_log_Biomass, x = (v_count)), method = "lm", color = "goldenrod", linewidth = 1.2) + 
+#  coord_cartesian(ylim = c(0.0,0.055), xlim = c(1,11))+
+  theme_light() +
+ # scale_x_continuous(breaks = c(1:11))+
+  #scale_y_continuous(scale_y_continuous(labels = scales::number_format(accuracy = 0.01),breaks = c(0:9)))+
+  labs(x = "Density of *V. dubia*", y = "Individual plant biomass (g)")+
+  theme(legend.position="none",axis.title.x =  ggtext::element_markdown(size = 12), axis.text.x = element_text(size= 12), axis.title.y = element_text(size = 12), axis.text.y = element_text( size = 12))
+
+
+
+  ggplot(filtered_datav, aes(x = (b_count), y = log_Biomass))+
+  geom_point(alpha=0.25, 
+             size = 3,
+             pch = 17)+
+  geom_smooth(aes(y = fitted_log_Biomass, x = (b_count)), method = "lm", color = "goldenrod", linewidth = 1.2) + 
+#  coord_cartesian(ylim = c(0.0,0.055), xlim = c(1,11))+
+  theme_light() +
+ # scale_x_continuous(breaks = c(1:11))+
+  #scale_y_continuous(scale_y_continuous(labels = scales::number_format(accuracy = 0.01),breaks = c(0:9)))+
+  labs(x = "Density of *B. tectorum*", y = "Individual plant biomass (g)")+
+  theme(legend.position="none",axis.title.x =  ggtext::element_markdown(size = 12), axis.text.x = element_text(size= 12), axis.title.y = element_text(size = 12), axis.text.y = element_text( size = 12))
+  
+
+
+```
+
+
+
+# bromus tectorum
+
+### monoculture increasing density
+analysis
+
+```{r}
+
+
+comp_data <- read_csv("compdata24.csv")
+comp_data <- as.data.frame(comp_data)
+# cheatgrass
+
+```
+
+```{r}
+brte <- subset(comp_data, Species=='BRTE')
+brte <- subset(brte, Phase == '1')
+brte <- subset(brte, Soil == 'Native')
+wmb <- max(brte$Biomass)
+
+
+brtealone <- subset(brte, Cheat_pct == '100')
+
+wm <- subset(brtealone, Total_plants == '1')
+wm <- mean(wm$Biomass)
+N <- brtealone$b_count
+bb <- 1
+
+
+fitb <- nls(Biomass ~ equ2(wm, alphab, b_count, bb), data = brtealone, 
+                   start = list(alphab = 0.1)) 
+
+summary(fitb)
+```
+
+check residuals
+```{r}
+# Get the residuals
+residuals <- resid(fitb)
+qqnorm(residuals)
+qqline(residuals, col="red")
+```
+
+
+remove outliers
+```{r}
+# Identify outliers using the IQR method
+Q1 <- quantile(residuals, 0.25)
+Q3 <- quantile(residuals, 0.75)
+IQR <- Q3 - Q1
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+outliers <- which(residuals < lower_bound | residuals > upper_bound)
+
+# Remove outliers from the dataset
+brtealone <- brtealone[-outliers, ]
+wm <- subset(brtealone, Total_plants == '1')
+wm <- mean(wm$Biomass)
+
+mean(brtealone$Biomass)
+```
+
+log transform
+
+```{r}
+# Check for Biomass values that are non-positive (since log(Biomass) requires positive values)
+summary(brtealone$Biomass)  # Ensure all values are > 0
+
+# Check for invalid values inside the log term: 1 + alpha * N must be positive
+summary(1 + 0.1 * brtealone$b_count)  # Check for possible issues here
+
+
+filtered_datab <- brtealone %>%
+  filter(Biomass > 0, (1 + 0.1 * brtealone$b_count) > 0)  # Using alpha = 0.1 as an example
+log(wm)
+# Now perform the log transformation
+filtered_datab$log_Biomass <- log(filtered_datab$Biomass)
+
+b <- 1
+equ2_log <- function(wm, alpha, N, b) {
+  return(-b * (log(wm) + log(1 + alpha * N)))
+}
+# Re-fit the log-transformed model
+fit_logb <- nls(log_Biomass ~ equ2_log(wm, alpha, b_count, b), 
+               data = filtered_datab, 
+               start = list(alpha = 0.1))
+
+# Check the fit
+summary(fit_logb)
+```
+
+```{r}
+residuals <- resid(fit_logb)
+qqnorm(residuals)
+qqline(residuals, col="red")
+hist(residuals, breaks = 20, main = "Histogram of Residuals")
+```
+
+```{r}
+rm(b)
+alpha <- 9.1804
+
+# Re-fit the log-transformed model
+fit_logb <- nls(log_Biomass ~ equ2_log(wm, alpha, b_count, b), 
+               data = filtered_datab, 
+               start = list(b = -1))
+
+# Check the fit
+summary(fit_logb)
+
+confint(fit_logb)
+
+```
+
+```{r}
+
+# Make predictions on the log scale
+log_predictions <- predict(fit_logb, newdata = filtered_datab)
+
+# Back-transform the predictions to the original scale
+predictions <- exp(log_predictions)
+
+# Calculate the residuals on the original scale
+residuals <- filtered_datab$Biomass - predictions
+
+# Residual sum of squares (RSS) on original scale
+rss <- sum(residuals^2)
+
+# Total sum of squares (TSS) on original scale
+tss <- sum((filtered_datab$Biomass - mean(filtered_datab$Biomass))^2)
+
+# Pseudo R^2 on the original scale
+pseudo_r2 <- 1 - (rss / tss)
+
+
+# Calculate residual sum of squares (RSS)
+RSS_logb <- sum(resid(fit_logb)^2)
+
+
+# Calculate total sum of squares (TSS)
+TSS_logb <- sum((filtered_datab$log_Biomass - mean(filtered_datab$log_Biomass))^2)
+
+# Compute R-squared for each model
+R2_logb <- 1 - (RSS_logb / TSS_logb)
+
+
+# Print the results
+cat("R-squared for fit_logb: ", R2_logb, "\n")
+
+```
+
+
+
+
+```{r}
+residuals <- resid(fit_logb)
+qqnorm(residuals)
+qqline(residuals, col="red")
+hist(residuals, breaks = 20, main = "Histogram of Residuals")
+```
+
+
+
+
+
+
+
+### Figure cheatgrass native soil alone
+```{r}
+
+filtered_datab$fitted_log_Biomass <- predict(fit_logb)
+
+  ggplot(filtered_datab, aes(x = (b_count), y = log_Biomass))+
+  geom_point(alpha=0.25, 
+             size = 3,
+             pch = 17)+
+  geom_smooth(aes(y = fitted_log_Biomass), color = "navy", linewidth = 1.2) + 
+#  coord_cartesian(ylim = c(0.0,0.055), xlim = c(1,11))+
+  theme_light() +
+ # scale_x_continuous(breaks = c(1:11))+
+  #scale_y_continuous(scale_y_continuous(labels = scales::number_format(accuracy = 0.01),breaks = c(0:9)))+
+  labs(x = "Density of *B. tectorum*", y = "Individual plant biomass (g)")+
+  theme(legend.position="none",axis.title.x =  ggtext::element_markdown(size = 12), axis.text.x = element_text(size= 12), axis.title.y = element_text(size = 12), axis.text.y = element_text( size = 12))
+
+```
+
+
+### compeitition
+analysis
+```{r}
+
+brte <- subset(comp_data, Species=='BRTE')
+brte <- subset(brte, Phase == '1')
+brte <- subset(brte, Soil == 'Native')
+wmb <- max(brte$Biomass)
+b <- 0.96848
+
+
+fit_old1 <- nls(Biomass ~ equ4(wmb, betab, b_count, alphavb, v_count, b), data = brte, 
+                start = list(betab = 0.1, alphavb = 0.1))
+
+
+summary(fit_old1)
+```
+
+
+check residuals
+```{r}
+residuals <- residuals(fit_old1)
+qqnorm(residuals)
+qqline(residuals, col="red")
+```
+
+
+remove outliers
+```{r}
+# Identify outliers using the IQR method
+Q1 <- quantile(residuals, 0.25)
+Q3 <- quantile(residuals, 0.75)
+IQR <- Q3 - Q1
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+outliers <- which(residuals < lower_bound | residuals > upper_bound)
+
+# Remove outliers from the dataset
+brte <- brte[-outliers, ]
+mean(brte$Biomass)
+wmb <- max(brte$Biomass)
+```
+
+log transform
+
+```{r}
+# Check for Biomass values that are non-positive (since log(Biomass) requires positive values)
+summary(brte$Biomass)  # Ensure all values are > 0
+
+# Check for invalid values inside the log term: 1 + alpha * N must be positive
+summary(1 + 0.1 * brte$b_count)  # Check for possible issues here
+
+
+
+b <- 0.96848
+# Ensure Biomass and log terms are positive
+filtered_databb <- brte %>%
+  filter(Biomass > 0) %>%
+  filter(1 + 0.1 * (b_count + 0.1 * v_count) > 0)  # Adjust the initial values of betav and alphabv accordingly
+
+# Log-transform the dependent variable (Biomass)
+filtered_databb$log_Biomass <- log(filtered_databb$Biomass)
+
+# Define the log-transformed model function
+equ4_log <- function(wmb, betab, nv, alphavb, nb, b) {
+  return(log(wmb) - b * log(1 + betab * (nb + alphavb * nv)))
+}
+
+# Fit the log-transformed model
+fit_logbb <- nls(log_Biomass ~ equ4_log(wmb, betab, b_count, alphavb, v_count, b), 
+               data = filtered_databb, 
+               start = list(betab = 0.1, alphavb = 0.1))
+
+# Check the fit
+summary(fit_logbb)
+
+
+```
+
+
+```{r}
+# Calculate residual sum of squares (RSS)
+RSS_logbb <- sum(resid(fit_logbb)^2)
+
+
+# Calculate total sum of squares (TSS)
+TSS_logbb <- sum((filtered_databb$log_Biomass - mean(filtered_databb$log_Biomass))^2)
+
+# Compute R-squared for each model
+R2_logbb <- 1 - (RSS_logbb / TSS_logbb)
+
+
+
+# Calculate residual sum of squares (RSS)
+RSS_logbb <- sum(resid(fit_logbb)^2)
+
+
+# Calculate total sum of squares (TSS)
+TSS_logbb <- sum((filtered_databb$log_Biomass - mean(filtered_databb$log_Biomass))^2)
+
+# Compute R-squared for each model
+R2_logbb <- 1 - (RSS_logbb / TSS_logbb)
+
+
+# Print the results
+cat("R-squared for fit_logbb: ", R2_logbb, "\n")
+```
+
+
+
+```{r}
+residuals <- resid(fit_logbb)
+qqnorm(residuals)
+qqline(residuals, col="red")
+hist(residuals, breaks = 20, main = "Histogram of Residuals")
+```
+
+
+## identify thresholds
+
+```{r}
+# Fit the model on the original dataset
+
+fit_logbb <- nlsLM(log_Biomass ~ equ4_log(wmb, betab, b_count, alphavb, v_count, b),              data = filtered_databb, 
+             start = list(betab = 0.1, alphavb = 0.1),
+             control = nls.lm.control(maxiter = 500))
+
+# Profile the likelihood
+prof <- profile(fit_logbb)
+
+# Get confidence intervals
+confint(prof)
+
+
+# Extract coefficients from the model
+betab_hat <- coef(fit_logbb)["betab"]
+alphavb_hat <- coef(fit_logbb)["alphavb"]
+
+# Calculate thresholds
+Db_50 <- 1 / betab_hat
+Db_75 <- 3 / betab_hat
+
+Dv_50 <- 1 / (alphavb_hat * betab_hat)
+Dv_75 <- 3 / (alphavb_hat * betab_hat)
+
+# Print results
+cat("Species b thresholds:\n")
+cat("50% decline:", Db_50, "\n")
+cat("75% decline:", Db_75, "\n")
+
+cat("\nSpecies v thresholds:\n")
+cat("50% decline:", Dv_50, "\n")
+cat("75% decline:", Dv_75, "\n")
+
+# Confidence intervals for betab and alphavb from profile likelihood
+conf_betab <- confint(prof)["betab", ]
+conf_alphavb <- confint(prof)["alphavb", ]
+
+# Confidence intervals for thresholds using upper and lower bounds
+Db_50_ci <- c(1 / conf_betab[2], 1 / conf_betab[1])  # Reverse for proper bounds
+Db_75_ci <- c(3 / conf_betab[2], 3 / conf_betab[1])
+
+Dv_50_ci <- c(1 / (conf_alphavb[2] * conf_betab[2]), 
+              1 / (conf_alphavb[1] * conf_betab[1]))
+Dv_75_ci <- c(3 / (conf_alphavb[2] * conf_betab[2]), 
+              3 / (conf_alphavb[1] * conf_betab[1]))
+
+# Print confidence intervals
+cat("\nSpecies b thresholds CI:\n")
+cat("50% decline CI:", Db_50_ci, "\n")
+cat("75% decline CI:", Db_75_ci, "\n")
+
+cat("\nSpecies v thresholds CI:\n")
+cat("50% decline CI:", Dv_50_ci, "\n")
+cat("75% decline CI:", Dv_75_ci, "\n")
+
+```
+
+
+
+
+
+## Figure cheatgrass native soil alone
+```{r}
+
+filtered_databb$fitted_log_Biomass <- predict(fit_logbb)
+
+
+ggplot(filtered_databb, aes(x = log(b_count), y = log_Biomass))+
+  geom_point(alpha=0.25, 
+             size = 3,
+             pch = 17)+
+  geom_smooth(aes(y = fitted_log_Biomass, x = log(b_count)), color = "navy", linewidth = 1.2) + 
+#  coord_cartesian(ylim = c(0.0,0.055), xlim = c(1,11))+
+  theme_light() +
+ # scale_x_continuous(breaks = c(1:11))+
+  #scale_y_continuous(scale_y_continuous(labels = scales::number_format(accuracy = 0.01),breaks = c(0:9)))+
+  labs(x = "Density of *B. tectorum*", y = "Individual plant biomass (g)")+
+  theme(legend.position="none",axis.title.x =  ggtext::element_markdown(size = 12), axis.text.x = element_text(size= 12), axis.title.y = element_text(size = 12), axis.text.y = element_text( size = 12))
+
+
+
+  ggplot(filtered_databb, aes(x = log(v_count), y = log_Biomass))+
+  geom_point(alpha=0.25, 
+             size = 3,
+             pch = 17)+
+  geom_smooth(aes(y = fitted_log_Biomass, x = log(v_count)), method = "lm", color = "navy", linewidth = 1.2) + 
+#  coord_cartesian(ylim = c(0.0,0.055), xlim = c(1,11))+
+  theme_light() +
+ # scale_x_continuous(breaks = c(1:11))+
+  #scale_y_continuous(scale_y_continuous(labels = scales::number_format(accuracy = 0.01),breaks = c(0:9)))+
+  labs(x = "Density of *V. dubia*", y = "Individual plant biomass (g)")+
+  theme(legend.position="none",axis.title.x =  ggtext::element_markdown(size = 12), axis.text.x = element_text(size= 12), axis.title.y = element_text(size = 12), axis.text.y = element_text( size = 12))
+  
+
+
+```
+
+
+
+
+# All figures
+
+### ventenata scatterplots
+```{r}
+windowsFonts()
+library(extrafont)
+loadfonts(device = "win")
+windowsFonts(A=windowsFont("Arial"))
+library(ggplot2)
+library(ggpubr)
+library(ggtext)
+#library(plotly)
+
+```
+
+```{r}
+rm(b)
+# Define your original function
+equ1_log <- function(wm, alpha, N, b) {
+  return(-b * (log(wm) + log(1 + alpha * N)))
+}
+
+# Fixed parameter 'alpha'
+
+alpha <- 222.14     
+
+
+# Re-fit the log-transformed model
+fit_logx <- nls(log_Biomass ~ equ1_log(wm, alpha, v_count, b), 
+               data = filtered_data, 
+               start = list(b = -1))
+
+# Generate a fine sequence of b_count values to predict over
+new_data <- data.frame(
+  v_count = seq(min(filtered_data$v_count), max(filtered_data$v_count), length.out = 100))
+                # Assuming a constant v_count for prediction
+
+# Predict log_Biomass for the new data sequence using the fitted model
+new_data$fitted_log_Biomass <- predict(fit_logx, newdata = new_data)
+
+# Plot the original data points and the smooth predicted line
+newmono <- ggplot(filtered_data, aes(x = v_count, y = log_Biomass)) +
+  geom_point(alpha = 0.25, size = 3, pch = 17) +
+  
+  # Add the fitted smooth curve based on the fine grid
+  geom_line(data = new_data, aes(x = v_count, y = fitted_log_Biomass), color = "goldenrod", size = 1) +
+  
+
+  
+  coord_cartesian(ylim = c(-7.5,-0.5), xlim = c(0,14))+
+  theme_light() +
+  scale_x_continuous(breaks = c(0:14))+
+  scale_y_continuous(breaks = c(-7.5:-0.5))+
+  
+  
+  labs(x = "Density of *V. dubia*", y = "Per capita biomass (natural log)") +
+  theme(legend.position = "none", 
+        axis.title.x = ggtext::element_markdown(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.y = element_text(size = 12))
+
+
+
+
+
+
+# Define your original function
+equ3_log <- function(wmv, betav, nv, alphabv, nb, b) {
+  return(log(wmv) - b * log(1 + betav * (nv + alphabv * nb)))
+}
+
+# Fixed parameter 'b'
+b <- 0.9673
+
+# Fit the nls model
+fit_logv <- nls(log_Biomass ~ equ3_log(wmv, betav, v_count, alphabv, b_count, b), 
+               data = filtered_datav, 
+               start = list(betav = 1, alphabv = 1))
+
+# Generate a fine sequence of b_count values to predict over
+new_datav <- data.frame(
+  b_count = seq(min(filtered_datav$b_count), max(filtered_datav$b_count), length.out = 100),
+  v_count = mean(filtered_datav$v_count)  # Assuming a constant v_count for prediction
+)
+
+# Predict log_Biomass for the new data sequence using the fitted model
+new_datav$fitted_log_Biomass <- predict(fit_logv, newdata = new_datav)
+
+# Plot the original data points and the smooth predicted line
+newv <- ggplot(filtered_datav, aes(x = b_count, y = log_Biomass)) +
+  geom_point(alpha = 0.25, size = 3, pch = 17) +
+  
+  # Add the fitted smooth curve based on the fine grid
+  geom_line(data = new_datav, aes(x = b_count, y = fitted_log_Biomass), color = "goldenrod", size = 1) +
+  
+
+  coord_cartesian(ylim = c(-7.5,-0.5), xlim = c(0,14))+
+  theme_light() +
+  scale_x_continuous(breaks = c(0:14))+
+  scale_y_continuous(breaks = c(-7.5:-0.5))+
+  
+  labs(x = "Density of *B. tectorum*", y = "Per capita biomass (natural log)") +
+  theme(legend.position = "none", 
+        axis.title.x = ggtext::element_markdown(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.y = element_text(size = 12))
+
+
+
+ggarrange(newmono, newv)
+```
+
+
+
+
+### cheatgrass scatterplots
+
+```{r}
+alpha <- 9.1804
+rm(b)
+equ2_log <- function(wm, alpha, N, b) {
+  return(-b * (log(wm) + log(1 + alpha * N)))
+}
+# Re-fit the log-transformed model
+fit_logb <- nls(log_Biomass ~ equ2_log(wm, alpha, b_count, b), 
+               data = filtered_datab, 
+               start = list(b = 0.1))
+
+# Generate a fine sequence of b_count values to predict over
+new_datab <- data.frame(
+  b_count = seq(min(filtered_datab$b_count), max(filtered_datab$b_count), length.out = 100))
+                # Assuming a constant b_count for prediction
+
+# Predict log_Biomass for the new data sequence using the fitted model
+new_datab$fitted_log_Biomass <- predict(fit_logb, newdata = new_datab)
+
+# Plot the original data points and the smooth predicted line
+newmonob <- ggplot(filtered_datab, aes(x = b_count, y = log_Biomass)) +
+  geom_point(alpha = 0.25, size = 3, pch = 16) +
+  
+  # Add the fitted smooth curve based on the fine grid
+  geom_line(data = new_datab, aes(x = b_count, y = fitted_log_Biomass), color = "navy", size = 1) +
+  
+
+  
+  coord_cartesian(ylim = c(-7.5,-0.5), xlim = c(0,14))+
+  theme_light() +
+  scale_x_continuous(breaks = c(0:14))+
+  scale_y_continuous(breaks = c(-7.5:-0.5))+
+  
+  
+  labs(x = "Density of *B. tectorum*", y = "Per capita biomass (natural log)") +
+  theme(legend.position = "none", 
+        axis.title.x = ggtext::element_markdown(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.y = element_text(size = 12))
+
+
+
+
+
+
+
+# Define your original function
+equ4_log <- function(wmb, betab, nv, alphavb, nb, b) {
+  return(log(wmb) - b * log(1 + betab * (nb + alphavb * nv)))
+}
+
+# Fixed parameter 'b'
+b <- 0.96848
+
+# Fit the nls model
+fit_logbb <- nls(log_Biomass ~ equ4_log(wmb, betab, b_count, alphavb, v_count, b), 
+               data = filtered_databb, 
+               start = list(betab = 0.1, alphavb = 0.1))
+
+
+# Generate a fine sequence of v_count values to predict over
+new_databb <- data.frame(
+  b_count = seq(min(filtered_databb$v_count), max(filtered_databb$v_count), length.out = 100),
+  v_count = mean(filtered_databb$b_count)  # Assuming a constant b_count for prediction
+)
+
+# Predict log_Biomass for the new data sequence using the fitted model
+new_databb$fitted_log_Biomass <- predict(fit_logbb, newdata = new_databb)
+
+# Plot the original data points and the smooth predicted line
+newbb <- ggplot(filtered_databb, aes(x = v_count, y = log_Biomass)) +
+  geom_point(alpha = 0.25, size = 3, pch = 16) +
+  
+  coord_cartesian(ylim = c(-7.5,-0.5), xlim = c(0,14))+
+  theme_light() +
+  scale_x_continuous(breaks = c(0:14))+
+  scale_y_continuous(breaks = c(-7.5:-0.5))+
+  
+  # Add the fitted smooth curve based on the fine grid
+  geom_line(data = new_databb, aes(x = b_count, y = fitted_log_Biomass), color = "navy", size = 1) +
+  
+  theme_light() +
+  labs(x = "Density of *V. dubia*", y = "Per capita biomass (natural log)") +
+  theme(legend.position = "none", 
+        axis.title.x = ggtext::element_markdown(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.y = element_text(size = 12))
+
+
+
+ggarrange(newmonob, newbb)
+```
+
+
